@@ -1,0 +1,529 @@
+---
+title: "Final Project"
+author: "Matthew Ambrosio"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+## **Quality Assessment*
+
+###Library Size
+
+```{r library_size, message=FALSE, warning=FALSE, cache=TRUE}
+
+#Read in Data set 
+setwd("~/Downloads")
+counts <- read.delim(gzfile("GSE152418_p20047_Study1_RawCounts.txt"), row.names = 1)
+
+
+# Calculate total counts (library size) for each sample
+library_sizes <- colSums(counts)
+
+# View library sizes
+library_sizes
+# Step 1: Get sample names
+sample_ids <- colnames(counts)
+
+# Step 2: Assign condition — assuming first 17 are COVID, rest are Healthy
+condition <- c(rep("COVID", 17), rep("Healthy", 17))
+
+# Step 3: Create metadata data frame
+meta <- data.frame(
+  sample = sample_ids,
+  condition = factor(condition, levels = c("Healthy", "COVID"))
+)
+
+# Step 4: Set rownames to match sample IDs
+rownames(meta) <- meta$sample
+
+
+```
+
+All library sizes are >10m reads, and each sample( covid vs. healthy have similar distributions). This is good.
+
+
+### Count Distributions
+
+To evaluate the distribution of expression values across samples, we generated boxplots of log2-transformed counts per sample.
+
+```{r count_dist, message=FALSE, warning=FALSE, cache=TRUE}
+
+# Log2-transform the counts (add 1 to avoid log(0))
+log_counts <- log2(counts + 1)
+
+# Boxplot of log2 counts per sample
+boxplot(log_counts, 
+        las = 2,                 # rotate x-axis labels
+        cex.axis = 0.6,          # shrink axis labels
+        main = "Log2 Count Distributions per Sample",
+        ylab = "Log2(Counts + 1)", 
+        col = "tomato")
+```
+
+The boxplots show consistent count distributions across all 34 samples, with no obvious outliers. Most samples have median log2(counts) between ~3 and 4.5, indicating typical expression ranges. The presence of high-count outliers (black dots above the whiskers) reflects a small number of highly expressed genes, which is common in RNA-seq data. These results suggest that the dataset is of good quality and appropriate for downstream analysis. Any remaining differences will be addressed during normalization.
+
+
+
+### Sample-to-Sample Correlation
+
+We computed Pearson correlation coefficients between all pairs of samples using log2-transformed counts, then visualized the results as a heatmap.
+
+```{r sample-correlation, echo=TRUE, cache=TRUE}
+library(pheatmap)
+sample_cor <- cor(log_counts)
+pheatmap(sample_cor,
+         main = "Sample-to-Sample Correlation Heatmap",
+         clustering_distance_rows = "correlation",
+         clustering_distance_cols = "correlation",
+         color = colorRampPalette(c("blue", "white", "red"))(100))
+```
+
+All samples exhibit high correlation coefficients (≥0.94), suggesting strong overall similarity in gene expression profiles. No samples are clear outliers. 
+
+### PCA 
+
+PCA was performed using the variance-stabilized transformed data from DESeq2.
+
+```{r pca, message=FALSE, warning=FALSE, cache=TRUE}
+if (!requireNamespace("DESeq2", quietly = TRUE)) {
+  BiocManager::install("DESeq2")
+}
+library(DESeq2)
+
+
+dds <- DESeqDataSetFromMatrix(countData = counts,
+                              colData = meta,
+                              design = ~ condition)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+vsd <- vst(dds, blind = FALSE)
+
+
+
+plotPCA(vsd, intgroup = "condition")
+
+# Get variance for each gene (row) across all samples
+gene_vars <- apply(assay(vsd), 1, var)
+
+# Select top 500 most variable genes
+top500_genes <- head(order(gene_vars, decreasing = TRUE), 500)
+
+# Subset VST matrix
+vst_top500 <- assay(vsd)[top500_genes, ]
+
+# PCA on top 500 genes
+pca_res <- prcomp(t(vst_top500), center = TRUE, scale. = FALSE)
+
+# Variance explained
+percent_var <- pca_res$sdev^2 / sum(pca_res$sdev^2) * 100
+
+# Show top 10 PCs
+round(percent_var[1:10], 2)
+
+
+```
+
+
+the top 5 principal components accounted for approximately 77% of the total variance. The PCA plot  further demonstrated clear separation between COVID-19 and healthy samples along PC1. 
+
+
+## **Preprocessing**
+
+Prior to differential expression analysis, the RNA-seq count data underwent several preprocessing steps to ensure data quality and compatibility with statistical modeling.
+
+### Filtering Lowly Expressed Genes
+
+Genes with very low expression across all samples were removed to reduce noise and improve statistical power. Specifically, genes with a total count of 10 or fewer across all 34 samples were excluded. This filtering step retained `r nrow(dds)` genes for downstream analysis.
+
+### Normalization
+
+Normalization was handled automatically by DESeq2 using its internal method based on estimated size factors. This approach adjusts for differences in library size and sequencing depth across samples, making gene expression values comparable across conditions without distorting the biological signal.
+
+### Variance-Stabilizing Transformation (VST)
+
+To prepare the data for visualization techniques such as PCA and sample clustering, a variance-stabilizing transformation was applied using `vst(dds, blind = FALSE)`. This transformation produces log2-like expression values while stabilizing the variance across the range of mean expression, making the data more suitable for exploratory analysis.
+
+### Feature Selection for PCA
+
+For principal component analysis (PCA), the top 500 most variable genes were selected based on their expression variance across all samples. This step enhances the interpretability of PCA by focusing on genes that contribute the most to sample-to-sample variation, rather than being diluted by low-variance genes.
+
+The first 10 principal components explained the following percentages of the total variance:
+
+- **PC1**: 44.67%
+- **PC2**: 10.50%
+- **PC3**: 9.44%
+- **PC4**: 7.14%
+- **PC5**: 5.10%
+- **PC6–PC10**: Smaller contributions (1–2% each)
+
+The top five components together accounted for approximately **77%** of the total variance, highlighting strong biological signal across conditions.
+
+
+
+
+## **Batch Effect Correction**
+
+```{r load-sva, message=FALSE, warning=FALSE, cache=TRUE}
+# Load sva package (install if needed)
+if (!requireNamespace("sva", quietly = TRUE)) {
+  BiocManager::install("sva")
+}
+library(sva)
+```
+
+```{r estimate-surrogate-variables, message=FALSE, warning=FALSE, cache=TRUE}
+# Create model matrices for SVA
+mod_full <- model.matrix(~ condition, data = meta)
+mod_null <- model.matrix(~ 1, data = meta)
+
+# Extract raw counts
+counts_matrix <- counts(dds)
+
+# Estimate surrogate variables
+svobj <- svaseq(as.matrix(counts_matrix), mod_full, mod_null)
+
+# Number of surrogate variables
+svobj$n.sv
+```
+
+```{r add-svs-to-meta, message=FALSE, warning=FALSE, cache=TRUE}
+# Add surrogate variables to metadata
+for (i in 1:svobj$n.sv) {
+  meta[[paste0("SV", i)]] <- svobj$sv[, i]
+}
+```
+
+```{r rebuild-dds-sva, message=FALSE, warning=FALSE, cache=TRUE}
+# Create updated design formula
+design_formula <- as.formula(
+  paste("~", paste0("SV", 1:svobj$n.sv, collapse = " + "), "+ condition")
+)
+
+# Create DESeq2 object with SVs
+dds_sva <- DESeqDataSetFromMatrix(countData = counts_matrix,
+                                  colData = meta,
+                                  design = design_formula)
+```
+
+```{r vst-sva, message=FALSE, warning=FALSE, cache=TRUE}
+# Apply variance-stabilizing transformation again
+vsd_sva <- vst(dds_sva, blind = FALSE)
+```
+
+Batch data was not available, so we applied SVA to estimate hidden sources of variation that may reflect batch effects or other unmodeled confounders. Using the svaseq() function, 8 significant surrogate variables were identified from the count matrix. These variables were added to the design formula in the DESeq2 model to account for unwanted variation.
+
+After incorporating the surrogate variables and performing a new variance-stabilizing transformation, we will generate PCA and clustering plots to evaluate the effect of batch correction. 
+
+
+
+### PCA Before Batch Correction
+
+```{r PCA_before, message=FALSE, warning=FALSE, cache=TRUE}
+library(ggplot2)
+p1 <- plotPCA(vsd, intgroup = "condition")
+p1 + ggtitle("PCA Before Batch Correction")
+```
+
+
+### PCA after batch correction
+```{r PCA_after, message=FALSE, warning=FALSE, cache=TRUE}
+p2 <- plotPCA(vsd_sva, intgroup = "condition")
+p2 + ggtitle("PCA After Batch Correction")
+```
+
+
+Before correction, the first two principal components explained 45% and 11% of the variance, respectively. The samples clustered distinctly by COVID vs. Healthy, suggesting strong biological signal. 
+
+After correction using SVA (8 surrogate variables), the variance explained remained similar (44% and 12% for PC1 and PC2), and sample clustering by condition was preserved. This suggests that batch correction did not distort the biological signal and may have removed residual unwanted variation.
+
+### Perform hierarchical clustering on the top 10% most variable genes before and after correction
+
+### Identify top 10% most variable genes (before correction)
+
+```{r cluster_before, message=FALSE, warning=FALSE, cache=TRUE}
+gene_vars <- apply(assay(vsd), 1, var)
+top10_idx <- head(order(gene_vars, decreasing = TRUE), length(gene_vars) * 0.10)
+
+#Heatmap before batch correction
+
+pheatmap(assay(vsd)[top10_idx, ],
+main = "Clustering Before Batch Correction",
+annotation_col = meta["condition"],
+show_rownames = FALSE,
+clustering_distance_rows = "euclidean",
+clustering_distance_cols = "euclidean")
+```
+
+
+### Identify top 10% most variable genes (after correction)
+
+```{r cluster_after, message=FALSE, warning=FALSE, cache=TRUE}
+gene_vars_sva <- apply(assay(vsd_sva), 1, var)
+top10_sva_idx <- head(order(gene_vars_sva, decreasing = TRUE), length(gene_vars_sva) * 0.10)
+
+#Heatmap after batch correction
+
+pheatmap(assay(vsd_sva)[top10_sva_idx, ],
+main = "Clustering After Batch Correction",
+annotation_col = meta["condition"],
+show_rownames = FALSE,
+clustering_distance_rows = "euclidean",
+clustering_distance_cols = "euclidean")
+```
+
+
+Hierarchical clustering based on the top 10% most variable genes showed that samples were already broadly grouped by condition (COVID vs. Healthy) before batch correction. After applying SVA, the overall clustering structure remained largely unchanged, with only minor reordering of samples within groups. This suggests that batch effects, if present, were not a major source of variation in this dataset. The strong biological signal separating the two conditions was preserved throughout, and no clear improvement in clustering tightness was observed after correction.
+
+
+
+## **Differential Expression Analysis**
+
+```{r cdiff, message=FALSE, warning=FALSE, cache=TRUE}
+# Run DESeq2 differential expression analysis
+
+dds_sva <- DESeq(dds_sva)
+
+# Extract results for condition (COVID vs. Healthy)
+
+res <- results(dds_sva, contrast = c("condition", "COVID", "Healthy"))
+
+# Order by adjusted p-value
+
+res_ordered <- res[order(res$padj), ]
+
+# View summary
+
+summary(res_ordered)
+
+```
+
+
+```{r filter, message=FALSE, warning=FALSE, cache=TRUE}
+### Filter significant genes (FDR < 0.05 and |log2FoldChange| > 1)
+
+sig_res <- subset(res_ordered, padj < 0.05 & abs(log2FoldChange) > 1)
+
+# Number of significant DE genes
+
+nrow(sig_res)
+
+```
+
+### Map to Gene Symbols: 
+
+```{r symbol, message=FALSE, warning=FALSE, cache=TRUE}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+# Map Ensembl IDs to Gene Symbols and Entrez IDs
+sig_res$SYMBOL <- mapIds(org.Hs.eg.db,
+                         keys = rownames(sig_res),
+                         column = "SYMBOL",
+                         keytype = "ENSEMBL",
+                         multiVals = "first")
+
+sig_res$ENTREZID <- mapIds(org.Hs.eg.db,
+                           keys = rownames(sig_res),
+                           column = "ENTREZID",
+                           keytype = "ENSEMBL",
+                           multiVals = "first")
+
+# Inspect first rows
+head(sig_res)
+
+```
+
+### Top 10 genes from differential analysis
+
+
+```{r top, message=FALSE, warning=FALSE, cache=TRUE}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# Keep original Ensembl rownames, just add SYMBOLs
+sig_res$SYMBOL <- mapIds(org.Hs.eg.db,
+                         keys = rownames(sig_res),
+                         column = "SYMBOL",
+                         keytype = "ENSEMBL",
+                         multiVals = "first")
+
+# Get Ensembl IDs for top 10 genes (not SYMBOLs)
+top10_ensembl <- rownames(sig_res[order(sig_res$padj), ])[1:10]
+
+# Extract expression data
+top_expr <- assay(vsd_sva)[top10_ensembl, ]
+
+# Add SYMBOL names for plotting
+gene_labels <- sig_res[top10_ensembl, "SYMBOL"]
+gene_labels[is.na(gene_labels)] <- top10_ensembl[is.na(gene_labels)]
+rownames(top_expr) <- gene_labels
+
+top_expr_df <- as.data.frame(top_expr)
+top_expr_df$gene <- rownames(top_expr_df)
+
+top_expr_long <- pivot_longer(top_expr_df,
+                              cols = -gene,
+                              names_to = "sample",
+                              values_to = "expression")
+
+top_expr_long$condition <- meta[top_expr_long$sample, "condition"]
+
+ggplot(top_expr_long, aes(x = condition, y = expression, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(~ gene, scales = "free_y") +
+  theme_bw() +
+  labs(title = "Top 10 Differentially Expressed Genes",
+       y = "VST-normalized expression",
+       x = "Condition") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+
+Differential expression analysis was done using the DESeq2 package on the batch-corrected dataset (dds_sva). The model included the condition of interest (COVID vs. Healthy), along with 8 surrogate variables estimated by SVA to adjust for potential hidden batch effects.
+
+Genes were filtered using an adjusted p-value cutoff of < 0.05 (FDR) and an absolute log2 fold change > 1 to retain only those with strong and meaningful differences. This resulted in 898 significantly differentially expressed genes between COVID and healthy samples.
+
+The boxplots below show the top 10 genes ranked by statistical significance. Most show clear expression differences between the two groups.
+
+Adjusted p-values were calculated using the Hochberg method to control for multiple testing,and the fold change threshold was used to emphasize genes with both statistical and biological relevance.
+
+
+
+
+## **Functional Enrichment Analysis**
+
+### GSEA 
+
+```{r gsea, message=FALSE, warning=FALSE, cache=TRUE}
+#Load library and packages for gsea
+
+BiocManager::install(c("clusterProfiler", "org.Hs.eg.db", "AnnotationDbi", "enrichplot"))
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(enrichplot)
+library(ggplot2)
+
+
+# Convert DESeq2 results to data frame
+res_df <- as.data.frame(res)
+
+# Remove NA adjusted p-values
+res_df <- res_df[!is.na(res_df$padj), ]
+
+# Map Ensembl IDs -> Entrez IDs
+res_df$entrez <- mapIds(org.Hs.eg.db,
+                        keys = rownames(res_df),
+                        column = "ENTREZID",
+                        keytype = "ENSEMBL",
+                        multiVals = "first")
+
+# Remove genes with no mapped Entrez ID
+res_df <- res_df[!is.na(res_df$entrez), ]
+
+# ---- KEY STEP -----
+# Deduplicate Entrez IDs by keeping gene with strongest log2FC
+res_df <- res_df |>
+  dplyr::group_by(entrez) |>
+  dplyr::slice_max(order_by = abs(log2FoldChange), n = 1) |>
+  dplyr::ungroup()
+
+# Build ranked list
+gene_ranks <- res_df$log2FoldChange
+names(gene_ranks) <- res_df$entrez
+
+# Must be sorted decreasing for GSEA
+gene_ranks <- sort(gene_ranks, decreasing = TRUE)
+
+# Check for duplicates (should be 0)
+sum(duplicated(names(gene_ranks)))
+
+gsea_bp <- gseGO(geneList = gene_ranks,
+                 OrgDb = org.Hs.eg.db,
+                 ont = "BP",
+                 keyType = "ENTREZID",
+                 minGSSize = 10,
+                 maxGSSize = 500,
+                 pvalueCutoff = 0.05,
+                 verbose = FALSE)
+
+dotplot(gsea_bp, showCategory = 10, title = "GSEA: GO Biological Process")
+
+#GO Molecular Function
+gsea_mf <- gseGO(geneList = gene_ranks,
+                 OrgDb = org.Hs.eg.db,
+                 ont = "MF",
+                 keyType = "ENTREZID",
+                 minGSSize = 10,
+                 maxGSSize = 500,
+                 pvalueCutoff = 0.05,
+                 verbose = FALSE)
+
+dotplot(gsea_mf, showCategory = 10, title = "GSEA: GO Molecular Function")
+
+#GO Cellular Component
+gsea_cc <- gseGO(geneList = gene_ranks,
+                 OrgDb = org.Hs.eg.db,
+                 ont = "CC",
+                 keyType = "ENTREZID",
+                 minGSSize = 10,
+                 maxGSSize = 500,
+                 pvalueCutoff = 0.05,
+                 verbose = FALSE)
+
+dotplot(gsea_cc, showCategory = 10, title = "GSEA: GO Cellular Component")
+
+#KEGG Pathways
+gsea_kegg <- gseKEGG(geneList = gene_ranks,
+                     organism = "hsa",
+                     keyType = "ncbi-geneid",
+                     minGSSize = 10,
+                     maxGSSize = 500,
+                     pvalueCutoff = 0.05,
+                     verbose = FALSE)
+
+dotplot(gsea_kegg, showCategory = 10, title = "GSEA: KEGG Pathways")
+
+# ---- GSEA plot for BP ----
+top_term_bp <- gsea_bp@result$ID[1]
+gseaplot2(gsea_bp, geneSetID = top_term_bp, title = gsea_bp@result$Description[1])
+
+# ---- GSEA plot for MF ----
+top_term_mf <- gsea_mf@result$ID[1]
+gseaplot2(gsea_mf, geneSetID = top_term_mf, title = gsea_mf@result$Description[1])
+
+# ---- GSEA plot for CC ----
+top_term_cc <- gsea_cc@result$ID[1]
+gseaplot2(gsea_cc, geneSetID = top_term_cc, title = gsea_cc@result$Description[1])
+
+# ---- GSEA plot for KEGG ----
+top_term_kegg <- gsea_kegg@result$ID[1]
+gseaplot2(gsea_kegg, geneSetID = top_term_kegg, title = gsea_kegg@result$Description[1])
+
+
+```
+
+
+
+Gene Set Enrichment Analysis (GSEA) was performed using GO terms across all three domains—Biological Process (BP), Molecular Function (MF), and Cellular Component (CC)—as well as KEGG pathways. Results were visualized using dot plots to summarize the top enriched terms and GSEA enrichment curves to examine the most significant pathways in more detail.
+
+In the Biological Process category, the top enriched terms were primarily related to mitosis and chromosome segregation, including "regulation of mitotic sister chromatid separation", "chromosome separation", and "spindle checkpoint signaling". These results suggest strong involvement of cell cycle regulation in the observed expression changes.
+
+For Molecular Function, enriched terms included "antigen binding", "structural constituent of ribosome", and "microtubule motor activity". These point to immune activity and cytoskeletal functions being affected, which aligns with both immune response and structural changes during infection or inflammation.
+
+In the Cellular Component domain, enriched terms were heavily focused on nuclear and chromosomal structures, such as "immunoglobulin complex", "nucleosome", and "chromosomal region". These results reinforce the involvement of both immune mechanisms and active changes in nuclear structure or DNA-associated proteins.
+
+Finally, KEGG pathway analysis highlighted several relevant pathways including "Ribosome", "Cell cycle", "Viral carcinogenesis", and "Systemic lupus erythematosus". Many of these are known to be affected in viral infections, suggesting that the transcriptional response in COVID samples is consistent with viral immune activation and possible dysregulation of host cell cycle processes.
+
+Overall, the enrichment results point to a combined signature of immune activation and proliferative signaling, both of which are expected in the context of a systemic viral infection like COVID-19.
+
+
+
+

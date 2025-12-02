@@ -1,0 +1,502 @@
+---
+title: "Manuscript"
+author: "Matthew Ambrosio"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+## **Introduction**
+COVID-19 is an infectious disease caused by the SARS-Cov-2 virus. Its symptoms include cough, shortness of breath, fatigue, nausea, and while symptoms generally get better within a couple weeks, severe cases can result in chronic illness and death. The virus spreads when droplets from an infected person come in contact with another individual, and this typically occurs from coughs, sneezes or through conversation. In 2020, COVID-19 became a global crisis due to its rapid spread, resulting in death for at least 3 million individuals in 2020 alone [1]. In this study, we seek to analyze the differential gene expression of humans infected with COVID-19 versus those not infected. 
+
+Understanding the molecular and immunological mechanisms associated with SARS-CoV-2 infection is critical for developing effective treatments and identifying biomarkers of disease severity. In a study completed in July 2020, researchers used expression profiling by high throughput sequencing to analyze immune response in COVID-19 individuals. They found differences between infected individuals and controls, including the Production of pro-inflammatory cytokines plasma levels of inflammatory mediators [2] [3]. In our study, we use similar high throughput sequencing data from the National Center for Biotechnology Information to perform differential analysis between COVID-19 and healthy individuals, with the goal to identify genes that are expressed differently between COVID-19 individuals and controls. Using a comprehensive RNA-seq analysis pipeline, including quality control, normalization, clustering, differential expression analysis, and functional enrichment, we aim to characterize the transcriptional changes associated with SARS-CoV-2 infection and gain insight into the biological pathways impacted by the disease. We also aim to compare our results to the aforementioned analysis completed in 2020. 
+
+
+## **Methods**
+
+We obtained RNA sequencing data from 17 COVID-19 positive homo sapiens and 17 controls (also homo sapiens) from the National Center for Biotechnology Information, using data from the GSE152418 Series. The dataset included sequencing counts on 60,683 unique genes [2]. 
+
+The gene expression matrix was imported into R and converted into a DESeqDataSet object using the DESeq2 package. Genes with zero counts across all samples were filtered out to reduce noise and improve statistical power. Each sample was annotated based on its disease status (COVID-19 or Healthy), and the factor levels were set to allow comparison of COVID-19 versus healthy controls, with COVID-19 as the reference level.
+
+To explore global patterns in the dataset, we performed Principal Component Analysis (PCA) on the transformed count data using the plotPCA() function from DESeq2. The PCA plot revealed clear separation between COVID-19 samples and healthy controls, indicating the presence of strong biological differences. No apparent batch effects were observed.
+
+Following quality control and exploratory analysis, we performed differential expression analysis using the DESeq2 pipeline. This included estimation of size factors to normalize for differences in sequencing depth, dispersion estimation, model fitting using a negative binomial distribution, and the application of the Wald test for significance testing. The results were filtered using an adjusted p-value threshold of 0.05, corrected using the Benjamini-Hochberg procedure after FDR adjustments. Genes with an absolute log2 fold change greater than 1 and an adjusted p-value less than 0.05 were considered significantly differentially expressed.
+
+The top differentially expressed genes were visualized using boxplots. To gain functional insight into the differentially expressed genes, we conducted enrichment analysis using the clusterProfiler package. Gene Ontology (GO) enrichment was performed across the three domains: Biological Process (BP), Cellular Component (CC), and Molecular Function (MF). KEGG pathway enrichment analysis was also conducted to identify overrepresented metabolic and signaling pathways. Additionally, Gene Set Enrichment Analysis (GSEA) was carried out using gene-level statistics obtained from the DESeq2 results. For GSEA, genes were ranked by their log2 fold changes, and enrichment scores were calculated using the gseGO() and gseKEGG() functions in clusterProfiler. The analyses were performed using the org.Hs.eg.db annotation database, and significance was determined using adjusted p-values.
+
+
+
+## **Results** 
+
+### Quality Assessment
+
+The dataset included RNA-seq expression counts from 34 homo sapien samples: 17 COVID-19 positive individuals and 17 healthy controls. All samples had high sequencing depth, with library sizes ranging from approximately 13 million to over 20 million reads, and no notable discrepancies in sequencing coverage between conditions (Table 1). Log2-transformed count distributions showed consistent expression levels across all samples, with median log2(counts) values typically between 3 and 4.5. No outliers were observed, and the presence of high-count features was consistent with expected patterns of a few highly expressed genes in transcriptomic data (Figure 1).
+
+### Table 1
+
+```{r library_size, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+
+#Read in Data set 
+setwd("~/Downloads")
+counts <- read.delim(gzfile("GSE152418_p20047_Study1_RawCounts.txt"), row.names = 1)
+
+
+# Calculate total counts (library size) for each sample
+library_sizes <- colSums(counts)
+
+# View library sizes
+library_sizes
+# Step 1: Get sample names
+sample_ids <- colnames(counts)
+
+# Step 2: Assign condition — assuming first 17 are COVID, rest are Healthy
+condition <- c(rep("COVID", 17), rep("Healthy", 17))
+
+# Step 3: Create metadata data frame
+meta <- data.frame(
+  sample = sample_ids,
+  condition = factor(condition, levels = c("Healthy", "COVID"))
+)
+
+# Step 4: Set rownames to match sample IDs
+rownames(meta) <- meta$sample
+
+
+```
+
+### Figure 1
+
+```{r count_dist, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+
+# Log2-transform the counts (add 1 to avoid log(0))
+log_counts <- log2(counts + 1)
+
+# Boxplot of log2 counts per sample
+boxplot(log_counts, 
+        las = 2,                 # rotate x-axis labels
+        cex.axis = 0.6,          # shrink axis labels
+        main = "Log2 Count Distributions per Sample",
+        ylab = "Log2(Counts + 1)", 
+        col = "tomato")
+```
+
+
+Sample-to-sample correlations were uniformly high (Pearson r ≥ 0.94), as visualized in a heatmap of pairwise correlations, indicating strong global similarity across the dataset (Figure 2). These quality control results confirmed that the data were suitable for downstream statistical analysis.
+
+### Figure 2
+
+```{r sample-correlation, echo=TRUE, echo=FALSE, cache=TRUE}
+library(pheatmap)
+sample_cor <- cor(log_counts)
+pheatmap(sample_cor,
+         main = "Sample-to-Sample Correlation Heatmap",
+         clustering_distance_rows = "correlation",
+         clustering_distance_cols = "correlation",
+         color = colorRampPalette(c("blue", "white", "red"))(100))
+```
+
+### Dimensionality Reduction and Batch Effect Assessment
+
+Principal component analysis (PCA) was conducted using the top 500 most variable genes based on variance-stabilizing transformed (VST) data. Before batch correction, the first principal component (PC1) accounted for 44.67% of total variance, while PC2 accounted for 10.50%, together explaining over 55% of the dataset’s variation. Samples showed distinct separation by condition along PC1, suggesting that disease status was a dominant source of variability in the expression profiles (Figure 3). Additionally displayed below Figure 3 is the proportion of variance determined by the top 10 principal Components, indicating that roughly 77% of the variance is accounted for by the first 5 principal components.  
+
+
+```{r pca, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+if (!requireNamespace("DESeq2", quietly = TRUE)) {
+  BiocManager::install("DESeq2")
+}
+library(DESeq2)
+
+
+dds <- DESeqDataSetFromMatrix(countData = counts,
+                              colData = meta,
+                              design = ~ condition)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+vsd <- vst(dds, blind = FALSE)
+
+
+
+plotPCA(vsd, intgroup = "condition")
+
+# Get variance for each gene (row) across all samples
+gene_vars <- apply(assay(vsd), 1, var)
+
+# Select top 500 most variable genes
+top500_genes <- head(order(gene_vars, decreasing = TRUE), 500)
+
+# Subset VST matrix
+vst_top500 <- assay(vsd)[top500_genes, ]
+
+# PCA on top 500 genes
+pca_res <- prcomp(t(vst_top500), center = TRUE, scale. = FALSE)
+
+# Variance explained
+percent_var <- pca_res$sdev^2 / sum(pca_res$sdev^2) * 100
+
+# Show top 10 PCs
+round(percent_var[1:10], 2)
+
+
+```
+
+
+Since no batch labels were available, surrogate variable analysis (SVA) was applied to detect and correct for potential hidden confounders. Eight surrogate variables (SVs) were estimated and included in the DESeq2 design model. After correction, PCA was repeated on the updated VST matrix. PC1 and PC2 explained 44% and 12% of the variance, respectively, and the separation between COVID-19 and healthy samples remained strong, indicating that biological signal was preserved and not confounded by batch-like components (Figure 4).  
+
+
+### Figure 4
+
+```{r load-sva, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+# Load sva package (install if needed)
+if (!requireNamespace("sva", quietly = TRUE)) {
+  BiocManager::install("sva")
+}
+library(sva)
+```
+
+```{r estimate-surrogate-variables, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+# Create model matrices for SVA
+mod_full <- model.matrix(~ condition, data = meta)
+mod_null <- model.matrix(~ 1, data = meta)
+
+# Extract raw counts
+counts_matrix <- counts(dds)
+
+# Estimate surrogate variables
+svobj <- svaseq(as.matrix(counts_matrix), mod_full, mod_null)
+
+# Number of surrogate variables
+svobj$n.sv
+```
+
+```{r add-svs-to-meta, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+# Add surrogate variables to metadata
+for (i in 1:svobj$n.sv) {
+  meta[[paste0("SV", i)]] <- svobj$sv[, i]
+}
+```
+
+```{r rebuild-dds-sva, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+# Create updated design formula
+design_formula <- as.formula(
+  paste("~", paste0("SV", 1:svobj$n.sv, collapse = " + "), "+ condition")
+)
+
+# Create DESeq2 object with SVs
+dds_sva <- DESeqDataSetFromMatrix(countData = counts_matrix,
+                                  colData = meta,
+                                  design = design_formula)
+```
+
+```{r vst-sva, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+# Apply variance-stabilizing transformation again
+vsd_sva <- vst(dds_sva, blind = FALSE)
+```
+
+
+
+```{r PCA_before, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+library(ggplot2)
+p1 <- plotPCA(vsd, intgroup = "condition")
+p1 + ggtitle("PCA Before Batch Correction")
+```
+
+
+
+```{r PCA_after, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+p2 <- plotPCA(vsd_sva, intgroup = "condition")
+p2 + ggtitle("PCA After Batch Correction")
+```
+
+Hierarchical clustering was also performed on the top 10% most variable genes, before and after batch correction. In both cases, samples grouped primarily by condition, with only minor reordering observed after applying SVA. These results suggest that the data were not dominated by technical variation, and that batch correction enhanced model robustness without diminishing true biological differences (Figure 5)
+
+###Figure 5
+
+```{r cluster_before, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+gene_vars <- apply(assay(vsd), 1, var)
+top10_idx <- head(order(gene_vars, decreasing = TRUE), length(gene_vars) * 0.10)
+
+#Heatmap before batch correction
+
+pheatmap(assay(vsd)[top10_idx, ],
+main = "Clustering Before Batch Correction",
+annotation_col = meta["condition"],
+show_rownames = FALSE,
+clustering_distance_rows = "euclidean",
+clustering_distance_cols = "euclidean")
+```
+
+
+
+
+```{r cluster_after, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+gene_vars_sva <- apply(assay(vsd_sva), 1, var)
+top10_sva_idx <- head(order(gene_vars_sva, decreasing = TRUE), length(gene_vars_sva) * 0.10)
+
+#Heatmap after batch correction
+
+pheatmap(assay(vsd_sva)[top10_sva_idx, ],
+main = "Clustering After Batch Correction",
+annotation_col = meta["condition"],
+show_rownames = FALSE,
+clustering_distance_rows = "euclidean",
+clustering_distance_cols = "euclidean")
+```
+
+## **Differential Expression Analysis**
+
+Differential expression analysis was performed using DESeq2 on the batch-corrected dataset that incorporated all 8 surrogate variables. Genes were filtered using an adjusted p-value threshold of < 0.05 (Benjamini-Hochberg FDR) and an absolute log2 fold change > 1 to retain genes with both statistical significance and biological relevance. A total of 898 genes met these criteria and were considered significantly differentially expressed between COVID-19 and healthy individuals.
+
+Among the top-ranked genes (based on adjusted p-value) were TPX2, TK1, RRM2, ASPM, UBE2C, and CCNA2, each showing log2 fold changes greater than 2.7 and adjusted p-values below 1e-25. These genes are known to be involved in cell proliferation, DNA replication, and mitotic regulation [4]. Boxplots of the top 10 genes demonstrated clear and consistent differences in expression between COVID-19 and control groups, reinforcing their relevance as potential transcriptional markers of infection (Figure 6).
+
+### Figure 6
+
+
+```{r cdiff, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+# Run DESeq2 differential expression analysis
+
+dds_sva <- DESeq(dds_sva)
+
+# Extract results for condition (COVID vs. Healthy)
+
+res <- results(dds_sva, contrast = c("condition", "COVID", "Healthy"))
+
+# Order by adjusted p-value
+
+res_ordered <- res[order(res$padj), ]
+
+# View summary
+
+summary(res_ordered)
+
+```
+
+
+```{r filter, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+### Filter significant genes (FDR < 0.05 and |log2FoldChange| > 1)
+
+sig_res <- subset(res_ordered, padj < 0.05 & abs(log2FoldChange) > 1)
+
+# Number of significant DE genes
+
+nrow(sig_res)
+
+```
+
+
+
+```{r symbol, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+# Map Ensembl IDs to Gene Symbols and Entrez IDs
+sig_res$SYMBOL <- mapIds(org.Hs.eg.db,
+                         keys = rownames(sig_res),
+                         column = "SYMBOL",
+                         keytype = "ENSEMBL",
+                         multiVals = "first")
+
+sig_res$ENTREZID <- mapIds(org.Hs.eg.db,
+                           keys = rownames(sig_res),
+                           column = "ENTREZID",
+                           keytype = "ENSEMBL",
+                           multiVals = "first")
+
+# Inspect first rows
+head(sig_res)
+
+```
+
+
+
+```{r top, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# Keep original Ensembl rownames, just add SYMBOLs
+sig_res$SYMBOL <- mapIds(org.Hs.eg.db,
+                         keys = rownames(sig_res),
+                         column = "SYMBOL",
+                         keytype = "ENSEMBL",
+                         multiVals = "first")
+
+# Get Ensembl IDs for top 10 genes (not SYMBOLs)
+top10_ensembl <- rownames(sig_res[order(sig_res$padj), ])[1:10]
+
+# Extract expression data
+top_expr <- assay(vsd_sva)[top10_ensembl, ]
+
+# Add SYMBOL names for plotting
+gene_labels <- sig_res[top10_ensembl, "SYMBOL"]
+gene_labels[is.na(gene_labels)] <- top10_ensembl[is.na(gene_labels)]
+rownames(top_expr) <- gene_labels
+
+top_expr_df <- as.data.frame(top_expr)
+top_expr_df$gene <- rownames(top_expr_df)
+
+top_expr_long <- pivot_longer(top_expr_df,
+                              cols = -gene,
+                              names_to = "sample",
+                              values_to = "expression")
+
+top_expr_long$condition <- meta[top_expr_long$sample, "condition"]
+
+ggplot(top_expr_long, aes(x = condition, y = expression, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(~ gene, scales = "free_y") +
+  theme_bw() +
+  labs(title = "Top 10 Differentially Expressed Genes",
+       y = "VST-normalized expression",
+       x = "Condition") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+### Functional Enrichment Analysis
+
+To gain insight into the biological processes underlying the observed gene expression changes, Gene Set Enrichment Analysis (GSEA) was performed using the full ranked list of genes from DESeq2. Analysis was conducted using Gene Ontology (GO) terms from the three major domains: Biological Process (BP), Molecular Function (MF), and Cellular Component (CC); as well as KEGG pathway annotations.
+
+In the Biological Process category, the most significantly enriched terms included “regulation of mitotic sister chromatid separation,” “chromosome segregation,” and “spindle checkpoint signaling.” These processes are central to mitosis and suggest that COVID-19 infection may induce cell cycle dysregulation or reflect expansion of specific immune or proliferative cell populations. [5]
+
+For Molecular Function, enriched terms included “antigen binding,” “structural constituent of ribosome,” and “microtubule motor activity.” These annotations point to a combination of immune system activation and involvement of structural and cytoskeletal proteins, which are consistent with the need for high protein turnover and trafficking in responding immune cells. [6]
+
+In the Cellular Component domain, top enriched terms featured “immunoglobulin complex,” “nucleosome,” and “chromosomal region.” These reinforce the involvement of both immune mechanisms and chromatin-level transcriptional activity, possibly tied to rapid immune responses or DNA replication processes. [7]
+KEGG pathway enrichment further supported these observations, highlighting “Ribosome,” “Cell cycle,” “Viral carcinogenesis,” and “Systemic lupus erythematosus” as the most significantly affected pathways. Many of these are commonly dysregulated in viral infections, underscoring the widespread transcriptional activation and host response triggered by SARS-CoV-2. [8]
+
+Taken together, the enrichment results indicate a combined biological signature of proliferative signaling, chromatin remodeling, and immune activation, all of which are hallmarks of systemic response to acute viral infection. (Figure 7) [9]
+
+### Figure 7
+
+
+```{r gsea, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
+#Load library and packages for gsea
+
+BiocManager::install(c("clusterProfiler", "org.Hs.eg.db", "AnnotationDbi", "enrichplot"))
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(enrichplot)
+library(ggplot2)
+
+
+# Convert DESeq2 results to data frame
+res_df <- as.data.frame(res)
+
+# Remove NA adjusted p-values
+res_df <- res_df[!is.na(res_df$padj), ]
+
+# Map Ensembl IDs -> Entrez IDs
+res_df$entrez <- mapIds(org.Hs.eg.db,
+                        keys = rownames(res_df),
+                        column = "ENTREZID",
+                        keytype = "ENSEMBL",
+                        multiVals = "first")
+
+# Remove genes with no mapped Entrez ID
+res_df <- res_df[!is.na(res_df$entrez), ]
+
+# ---- KEY STEP -----
+# Deduplicate Entrez IDs by keeping gene with strongest log2FC
+res_df <- res_df |>
+  dplyr::group_by(entrez) |>
+  dplyr::slice_max(order_by = abs(log2FoldChange), n = 1) |>
+  dplyr::ungroup()
+
+# Build ranked list
+gene_ranks <- res_df$log2FoldChange
+names(gene_ranks) <- res_df$entrez
+
+# Must be sorted decreasing for GSEA
+gene_ranks <- sort(gene_ranks, decreasing = TRUE)
+
+# Check for duplicates (should be 0)
+sum(duplicated(names(gene_ranks)))
+
+gsea_bp <- gseGO(geneList = gene_ranks,
+                 OrgDb = org.Hs.eg.db,
+                 ont = "BP",
+                 keyType = "ENTREZID",
+                 minGSSize = 10,
+                 maxGSSize = 500,
+                 pvalueCutoff = 0.05,
+                 verbose = FALSE)
+
+dotplot(gsea_bp, showCategory = 10, title = "GSEA: GO Biological Process")
+
+#GO Molecular Function
+gsea_mf <- gseGO(geneList = gene_ranks,
+                 OrgDb = org.Hs.eg.db,
+                 ont = "MF",
+                 keyType = "ENTREZID",
+                 minGSSize = 10,
+                 maxGSSize = 500,
+                 pvalueCutoff = 0.05,
+                 verbose = FALSE)
+
+dotplot(gsea_mf, showCategory = 10, title = "GSEA: GO Molecular Function")
+
+#GO Cellular Component
+gsea_cc <- gseGO(geneList = gene_ranks,
+                 OrgDb = org.Hs.eg.db,
+                 ont = "CC",
+                 keyType = "ENTREZID",
+                 minGSSize = 10,
+                 maxGSSize = 500,
+                 pvalueCutoff = 0.05,
+                 verbose = FALSE)
+
+dotplot(gsea_cc, showCategory = 10, title = "GSEA: GO Cellular Component")
+
+#KEGG Pathways
+gsea_kegg <- gseKEGG(geneList = gene_ranks,
+                     organism = "hsa",
+                     keyType = "ncbi-geneid",
+                     minGSSize = 10,
+                     maxGSSize = 500,
+                     pvalueCutoff = 0.05,
+                     verbose = FALSE)
+
+dotplot(gsea_kegg, showCategory = 10, title = "GSEA: KEGG Pathways")
+
+# ---- GSEA plot for BP ----
+top_term_bp <- gsea_bp@result$ID[1]
+gseaplot2(gsea_bp, geneSetID = top_term_bp, title = gsea_bp@result$Description[1])
+
+# ---- GSEA plot for MF ----
+top_term_mf <- gsea_mf@result$ID[1]
+gseaplot2(gsea_mf, geneSetID = top_term_mf, title = gsea_mf@result$Description[1])
+
+# ---- GSEA plot for CC ----
+top_term_cc <- gsea_cc@result$ID[1]
+gseaplot2(gsea_cc, geneSetID = top_term_cc, title = gsea_cc@result$Description[1])
+
+# ---- GSEA plot for KEGG ----
+top_term_kegg <- gsea_kegg@result$ID[1]
+gseaplot2(gsea_kegg, geneSetID = top_term_kegg, title = gsea_kegg@result$Description[1])
+
+
+```
+
+
+
+
+
+## **Discussion**
+
+This study investigated transcriptional changes in peripheral blood mononuclear cells (PBMCs) from COVID-19 positive individuals compared to healthy controls using RNA-seq data from the GSE152418 dataset. The results revealed a distinct gene expression profile associated with SARS-CoV-2 infection, characterized by upregulation of genes involved in cell cycle progression, DNA replication, immune activation, and chromatin remodeling. These findings are consistent with known features of antiviral responses, including increased lymphocyte proliferation, enhanced protein synthesis, and activation of interferon-stimulated pathways [8].
+
+In the biological context of COVID-19, the enrichment of pathways such as “Cell cycle,” “Chromosome segregation,” and “Systemic lupus erythematosus” reflects the activation of immune cells and widespread transcriptional reprogramming. Top differentially expressed genes such as TPX2, RRM2, and CCNA2 are linked to mitotic regulation and may represent a proliferative signature in circulating immune populations [2]. Likewise, enrichment of molecular function terms like “antigen binding” and “ribosomal structure” suggests a heightened demand for translation and immune signaling. These results support prior observations that SARS-CoV-2 infection induces both innate and adaptive immune responses accompanied by transcriptional shifts in cell cycle and metabolic programs [7].
+
+Compared to the original analysis of GSE152418, this study applied several analytical improvements that enhanced the specificity and reproducibility of the findings. The use of surrogate variable analysis (SVA) to correct for hidden batch effects allowed for adjustment of latent sources of variability not accounted for in the initial publication. This approach maintained the primary biological signal while improving statistical robustness. Additionally, differential expression was filtered using both adjusted p-values (FDR < 0.05) and a minimum log2 fold change of 1, in contrast to the original study’s less conservative filtering. As a result, this analysis identified 898 significantly differentially expressed genes, compared to over 3,500 reported previously. The more stringent criteria likely reduced false positives and improved interpretability without compromising biological relevance.
+
+Furthermore, gene set enrichment was performed using ranking-based methods (GSEA) rather than simple overrepresentation analysis. This allowed for the detection of subtle but coordinated expression shifts in functionally related gene groups, enhancing the resolution of pathway-level changes. Several of the most significantly enriched Gene Ontology (GO) and KEGG terms observed here, including “Spindle checkpoint signaling,” “Viral carcinogenesis,” and “Nucleosome,” were either not emphasized or not detected in the original publication, indicating the added sensitivity of the revised pipeline.
+
+Despite these strengths, the study is subject to several limitations. First, the analysis was restricted to bulk RNA-seq data from PBMCs, which lack single-cell resolution and may obscure important cell-type–specific effects. Second, although SVA effectively adjusts for unmeasured confounding, the absence of explicit batch metadata limits verification of specific sources of technical variation. Third, clinical variables such as patient age, sex, disease severity, and treatment status were not incorporated into the design matrix, which may contribute to residual heterogeneity and restrict generalizability.
+
+Overall, this analysis confirms and refines previous findings from GSE152418 while demonstrating the importance of robust statistical methods in transcriptomic research. The identification of a core set of differentially expressed genes and enriched pathways offers insight into the systemic immune and proliferative responses to COVID-19. Future work could integrate multi-omic data, include covariate adjustment for clinical metadata, or apply single-cell approaches to further dissect the complexity of SARS-CoV-2 host responses.
+
+
