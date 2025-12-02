@@ -6,6 +6,7 @@ output:
     df_print: paged
   pdf_document: default
   word_document: default
+  bibliography: references.bib
 ---
 
 ## **Introduction**
@@ -502,4 +503,6 @@ Despite these strengths, the study is subject to several limitations. First, the
 
 Overall, this analysis confirms and refines previous findings from GSE152418 while demonstrating the importance of robust statistical methods in transcriptomic research. The identification of a core set of differentially expressed genes and enriched pathways offers insight into the systemic immune and proliferative responses to COVID-19. Future work could integrate multi-omic data, include covariate adjustment for clinical metadata, or apply single-cell approaches to further dissect the complexity of SARS-CoV-2 host responses.
 
+## **References** 
 
+# References

@@ -1,0 +1,69 @@
+@misc{who2020,
+  title = {Coronavirus},
+  author = {{World Health Organization}},
+  year = {2020},
+  url = {https://www.who.int/health-topics/coronavirus#tab=tab_1}
+}
+
+@misc{geo152418,
+  title = {GSE152418 - NCBI GEO Dataset},
+  author = {{NCBI GEO}},
+  url = {https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152418}
+}
+
+@article{blanco2020,
+  title = {Imbalanced Host Response to SARS-CoV-2 Drives Development of COVID-19},
+  author = {Blanco-Melo, Daniel and Nilsson-Payant, Benjamin E. and Liu, Wei-Che et al.},
+  journal = {Science},
+  year = {2020},
+  doi = {10.1126/science.abc6261},
+  url = {https://www.science.org/doi/10.1126/science.abc6261}
+}
+
+@article{steeg2002,
+  title = {TPX2: A novel microtubule-associated protein involved in mitotic spindle organization},
+  author = {Wittmann, T. and Hyman, A. and Desai, A.},
+  journal = {Molecular Biology of the Cell},
+  year = {2002},
+  url = {https://www.molbiolcell.org/doi/full/10.1091/mbc.E02-02-0103}
+}
+
+@article{singlecell2021,
+  title = {Single-cell landscape of bronchoalveolar immune cells in patients with COVID-19},
+  author = {Liao, M. et al.},
+  journal = {Cell},
+  year = {2021},
+  url = {https://www.sciencedirect.com/science/article/pii/S0092867421001483}
+}
+
+@article{immuneactivation2020,
+  title = {Immune activation and inflammation in COVID-19},
+  author = {Lucas, C. et al.},
+  journal = {Nature Medicine},
+  year = {2020},
+  url = {https://pubmed.ncbi.nlm.nih.gov/32810438/}
+}
+
+@article{chromatin2020,
+  title = {Chromatin accessibility landscape of peripheral blood mononuclear cells in COVID-19},
+  author = {Corley, M. J. et al.},
+  journal = {Cell Reports},
+  year = {2020},
+  url = {https://pubmed.ncbi.nlm.nih.gov/32651212/}
+}
+
+@article{lupus2020,
+  title = {Systemic lupus erythematosus in COVID-19: Immune landscape and transcriptomics},
+  author = {Zhou, Z. et al.},
+  journal = {Frontiers in Immunology},
+  year = {2020},
+  url = {https://pmc.ncbi.nlm.nih.gov/articles/PMC7227586/}
+}
+
+@article{ifng2020,
+  title = {Interferon-gamma signature in COVID-19 severity and recovery},
+  author = {Hadjadj, J. et al.},
+  journal = {Nature Reviews Immunology},
+  year = {2020},
+  url = {https://pubmed.ncbi.nlm.nih.gov/32464097/}
+}

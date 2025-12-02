@@ -2,10 +2,11 @@
 title: "Differential Analysis of Genes in COVID-19 Individuals and COVID-free Individuals"
 author: "Matthew Ambrosio"
 output:
-  word_document: default
-  pdf_document: default
   html_document:
     df_print: paged
+   
+  pdf_document: default
+  word_document: default
 ---
 
 ## **Quality Assessment*
