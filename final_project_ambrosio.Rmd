@@ -1,5 +1,5 @@
 ---
-title: "Final Project"
+title: "Differential Analysis of Genes in COVID-19 Individuals and COVID-free Individuals"
 author: "Matthew Ambrosio"
 output:
   word_document: default
@@ -15,8 +15,10 @@ output:
 ```{r library_size, message=FALSE, warning=FALSE, cache=TRUE}
 
 #Read in Data set 
-setwd("~/Downloads")
-counts <- read.delim(gzfile("GSE152418_p20047_Study1_RawCounts.txt"), row.names = 1)
+#setwd("~/Downloads")
+#counts <- read.delim(gzfile("GSE152418_p20047_Study1_RawCounts.txt"), row.names = 1)
+
+counts <- read.delim("GSE152418_p20047_Study1_RawCounts.txt", row.names = 1)
 
 
 # Calculate total counts (library size) for each sample

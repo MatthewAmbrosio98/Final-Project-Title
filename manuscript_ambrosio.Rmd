@@ -1,5 +1,5 @@
 ---
-title: "Manuscript"
+title: "Differential Analysis of Genes in COVID-19 Individuals and COVID-free Individuals"
 author: "Matthew Ambrosio"
 output:
   html_document:
@@ -39,8 +39,11 @@ The dataset included RNA-seq expression counts from 34 homo sapien samples: 17 C
 ```{r library_size, message=FALSE, warning=FALSE, echo=FALSE, cache=TRUE}
 
 #Read in Data set 
-setwd("~/Downloads")
-counts <- read.delim(gzfile("GSE152418_p20047_Study1_RawCounts.txt"), row.names = 1)
+#setwd("~/Downloads")
+#counts <- read.delim(gzfile("GSE152418_p20047_Study1_RawCounts.txt"), row.names = 1)
+
+counts <- read.delim("GSE152418_p20047_Study1_RawCounts.txt", row.names = 1)
+
 
 
 # Calculate total counts (library size) for each sample
